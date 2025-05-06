@@ -68,16 +68,15 @@ async function connectToDatabase() {
 
     console.log('Connecting to MongoDB...');
     
-    if (!process.env.MONGODB_URI) {
-      throw new Error('MONGODB_URI is not defined in environment variables');
-    }
+    // Direct MongoDB connection URL
+    const MONGODB_URI = 'mongodb+srv://vamsi:vamsi123@cluster0.qnzwuai.mongodb.net/travel-form?retryWrites=true&w=majority';
 
     console.log('MongoDB URI format check:', {
-      hasProtocol: process.env.MONGODB_URI.startsWith('mongodb'),
-      length: process.env.MONGODB_URI.length
+      hasProtocol: MONGODB_URI.startsWith('mongodb'),
+      length: MONGODB_URI.length
     });
 
-    const db = await mongoose.connect(process.env.MONGODB_URI);
+    const db = await mongoose.connect(MONGODB_URI);
     console.log('Successfully connected to MongoDB');
     cachedDb = db;
     return db;
