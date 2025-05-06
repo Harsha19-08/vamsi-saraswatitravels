@@ -85,13 +85,28 @@ app.post('/api/submit-form', upload.fields([
   { name: 'ticket', maxCount: 1 },
 ]), async (req, res) => {
   try {
+    console.log('Received form submission request');
     await connectToDatabase();
+    console.log('Connected to database');
     
     const files = req.files as { [fieldname: string]: Express.Multer.File[] };
+    console.log('Files received:', Object.keys(files));
     
     if (!files.reviewScreenshot || !files.ticket) {
+      console.log('Missing files:', {
+        hasReviewScreenshot: !!files.reviewScreenshot,
+        hasTicket: !!files.ticket
+      });
       return res.status(400).json({ error: 'Both review screenshot and ticket are required' });
     }
+
+    console.log('Form data received:', {
+      ...req.body,
+      files: {
+        reviewScreenshot: files.reviewScreenshot[0].originalname,
+        ticket: files.ticket[0].originalname
+      }
+    });
 
     const formData = {
       ...req.body,
@@ -101,8 +116,12 @@ app.post('/api/submit-form', upload.fields([
       ticketType: files.ticket[0].mimetype,
     };
 
+    console.log('Creating new TravelForm document');
     const travelForm = new TravelForm(formData);
+    
+    console.log('Saving to database...');
     await travelForm.save();
+    console.log('Successfully saved to database');
 
     res.status(201).json({ 
       message: 'Form submitted successfully',
@@ -113,15 +132,32 @@ app.post('/api/submit-form', upload.fields([
       }
     });
   } catch (error) {
-    console.error('Error submitting form:', error);
-    res.status(500).json({ error: 'Failed to submit form' });
+    console.error('Error details:', {
+      message: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : undefined,
+      body: req.body,
+      files: req.files ? Object.keys(req.files) : 'No files'
+    });
+    
+    res.status(500).json({ 
+      error: 'Failed to submit form',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
   }
 });
 
 // Error handling middleware
 app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
-  console.error(err.stack);
-  res.status(500).json({ error: 'Something went wrong!' });
+  console.error('Global error handler:', {
+    error: err.message,
+    stack: err.stack,
+    path: req.path,
+    method: req.method
+  });
+  res.status(500).json({ 
+    error: 'Something went wrong!',
+    details: process.env.NODE_ENV === 'development' ? err.message : undefined
+  });
 });
 
 // 404 handler for undefined routes
