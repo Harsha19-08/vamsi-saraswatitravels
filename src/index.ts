@@ -60,13 +60,30 @@ const TravelForm = mongoose.model('TravelForm', travelFormSchema);
 let cachedDb: typeof mongoose | null = null;
 
 async function connectToDatabase() {
-  if (cachedDb) {
-    return cachedDb;
-  }
+  try {
+    if (cachedDb) {
+      console.log('Using cached database connection');
+      return cachedDb;
+    }
 
-  const db = await mongoose.connect(process.env.MONGODB_URI!);
-  cachedDb = db;
-  return db;
+    console.log('Connecting to MongoDB...');
+    console.log('MongoDB URI exists:', !!process.env.MONGODB_URI);
+    
+    if (!process.env.MONGODB_URI) {
+      throw new Error('MONGODB_URI is not defined in environment variables');
+    }
+
+    const db = await mongoose.connect(process.env.MONGODB_URI);
+    console.log('Successfully connected to MongoDB');
+    cachedDb = db;
+    return db;
+  } catch (error) {
+    console.error('MongoDB connection error:', {
+      message: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : undefined
+    });
+    throw error;
+  }
 }
 
 // Root route
@@ -86,27 +103,53 @@ app.post('/api/submit-form', upload.fields([
 ]), async (req, res) => {
   try {
     console.log('Received form submission request');
-    await connectToDatabase();
-    console.log('Connected to database');
     
-    const files = req.files as { [fieldname: string]: Express.Multer.File[] };
-    console.log('Files received:', Object.keys(files));
-    
-    if (!files.reviewScreenshot || !files.ticket) {
-      console.log('Missing files:', {
-        hasReviewScreenshot: !!files.reviewScreenshot,
-        hasTicket: !!files.ticket
-      });
-      return res.status(400).json({ error: 'Both review screenshot and ticket are required' });
+    // Check if files exist in the request
+    if (!req.files) {
+      console.error('No files were uploaded');
+      return res.status(400).json({ error: 'No files were uploaded' });
     }
 
-    console.log('Form data received:', {
-      ...req.body,
-      files: {
-        reviewScreenshot: files.reviewScreenshot[0].originalname,
-        ticket: files.ticket[0].originalname
-      }
+    const files = req.files as { [fieldname: string]: Express.Multer.File[] };
+    console.log('Files received:', {
+      fileKeys: Object.keys(files),
+      reviewScreenshot: files.reviewScreenshot ? files.reviewScreenshot[0].originalname : 'missing',
+      ticket: files.ticket ? files.ticket[0].originalname : 'missing'
     });
+
+    // Validate required fields
+    const requiredFields = ['name', 'email', 'phone', 'dateOfTravel', 'source'];
+    const missingFields = requiredFields.filter(field => !req.body[field]);
+    
+    if (missingFields.length > 0) {
+      console.error('Missing required fields:', missingFields);
+      return res.status(400).json({ 
+        error: 'Missing required fields', 
+        fields: missingFields 
+      });
+    }
+
+    // Connect to database
+    try {
+      await connectToDatabase();
+    } catch (dbError) {
+      console.error('Database connection failed:', dbError);
+      return res.status(500).json({ 
+        error: 'Database connection failed',
+        details: process.env.NODE_ENV === 'development' ? dbError.message : undefined
+      });
+    }
+
+    if (!files.reviewScreenshot || !files.ticket) {
+      console.error('Missing required files');
+      return res.status(400).json({ 
+        error: 'Both review screenshot and ticket are required',
+        received: {
+          hasReviewScreenshot: !!files.reviewScreenshot,
+          hasTicket: !!files.ticket
+        }
+      });
+    }
 
     const formData = {
       ...req.body,
@@ -116,23 +159,37 @@ app.post('/api/submit-form', upload.fields([
       ticketType: files.ticket[0].mimetype,
     };
 
-    console.log('Creating new TravelForm document');
-    const travelForm = new TravelForm(formData);
-    
-    console.log('Saving to database...');
-    await travelForm.save();
-    console.log('Successfully saved to database');
-
-    res.status(201).json({ 
-      message: 'Form submitted successfully',
-      data: {
-        ...travelForm.toObject(),
-        reviewScreenshot: undefined,
-        ticket: undefined
-      }
+    console.log('Creating new TravelForm document with data:', {
+      ...formData,
+      reviewScreenshot: 'Buffer data',
+      ticket: 'Buffer data'
     });
+
+    try {
+      const travelForm = new TravelForm(formData);
+      await travelForm.save();
+      console.log('Successfully saved to database');
+
+      res.status(201).json({ 
+        message: 'Form submitted successfully',
+        data: {
+          ...travelForm.toObject(),
+          reviewScreenshot: undefined,
+          ticket: undefined
+        }
+      });
+    } catch (saveError) {
+      console.error('Error saving to database:', {
+        error: saveError instanceof Error ? saveError.message : 'Unknown error',
+        stack: saveError instanceof Error ? saveError.stack : undefined
+      });
+      return res.status(500).json({ 
+        error: 'Failed to save form data',
+        details: process.env.NODE_ENV === 'development' ? saveError.message : undefined
+      });
+    }
   } catch (error) {
-    console.error('Error details:', {
+    console.error('Unhandled error in form submission:', {
       message: error instanceof Error ? error.message : 'Unknown error',
       stack: error instanceof Error ? error.stack : undefined,
       body: req.body,
