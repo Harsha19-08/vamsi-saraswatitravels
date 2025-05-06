@@ -67,22 +67,28 @@ async function connectToDatabase() {
     }
 
     console.log('Connecting to MongoDB...');
-    console.log('MongoDB URI exists:', !!process.env.MONGODB_URI);
     
     if (!process.env.MONGODB_URI) {
       throw new Error('MONGODB_URI is not defined in environment variables');
     }
+
+    console.log('MongoDB URI format check:', {
+      hasProtocol: process.env.MONGODB_URI.startsWith('mongodb'),
+      length: process.env.MONGODB_URI.length
+    });
 
     const db = await mongoose.connect(process.env.MONGODB_URI);
     console.log('Successfully connected to MongoDB');
     cachedDb = db;
     return db;
   } catch (error) {
+    const mongoError = error as Error;
     console.error('MongoDB connection error:', {
-      message: error instanceof Error ? error.message : 'Unknown error',
-      stack: error instanceof Error ? error.stack : undefined
+      message: mongoError.message,
+      stack: mongoError.stack,
+      name: mongoError.name
     });
-    throw error;
+    throw new Error(`Database connection failed: ${mongoError.message}`);
   }
 }
 
@@ -132,11 +138,15 @@ app.post('/api/submit-form', upload.fields([
     // Connect to database
     try {
       await connectToDatabase();
-    } catch (dbError) {
-      console.error('Database connection failed:', dbError);
+    } catch (error) {
+      const dbError = error as Error;
+      console.error('Database connection failed:', {
+        message: dbError.message,
+        stack: dbError.stack
+      });
       return res.status(500).json({ 
         error: 'Database connection failed',
-        details: process.env.NODE_ENV === 'development' ? dbError.message : undefined
+        details: dbError.message
       });
     }
 
@@ -178,27 +188,29 @@ app.post('/api/submit-form', upload.fields([
           ticket: undefined
         }
       });
-    } catch (saveError) {
+    } catch (error) {
+      const saveError = error as Error;
       console.error('Error saving to database:', {
-        error: saveError instanceof Error ? saveError.message : 'Unknown error',
-        stack: saveError instanceof Error ? saveError.stack : undefined
+        message: saveError.message,
+        stack: saveError.stack
       });
       return res.status(500).json({ 
         error: 'Failed to save form data',
-        details: process.env.NODE_ENV === 'development' ? saveError.message : undefined
+        details: saveError.message
       });
     }
   } catch (error) {
+    const serverError = error as Error;
     console.error('Unhandled error in form submission:', {
-      message: error instanceof Error ? error.message : 'Unknown error',
-      stack: error instanceof Error ? error.stack : undefined,
+      message: serverError.message,
+      stack: serverError.stack,
       body: req.body,
       files: req.files ? Object.keys(req.files) : 'No files'
     });
     
     res.status(500).json({ 
       error: 'Failed to submit form',
-      details: error instanceof Error ? error.message : 'Unknown error'
+      details: serverError.message
     });
   }
 });
