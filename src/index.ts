@@ -2,9 +2,9 @@ import express from 'express';
 import mongoose from 'mongoose';
 import cors from 'cors';
 import multer from 'multer';
+import path from 'path';
 import dotenv from 'dotenv';
 import morgan from 'morgan';
-import serverless from 'serverless-http';
 
 // Load environment variables
 dotenv.config();
@@ -19,10 +19,14 @@ app.use(cors({
 app.use(express.json());
 app.use(morgan('dev'));
 
-// ✅ Use in-memory storage instead of disk
+// Configure multer for file uploads with memory storage for Vercel
+const storage = multer.memoryStorage();
+
 const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 },
+  storage,
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB limit
+  },
   fileFilter: (req, file, cb) => {
     const allowedTypes = ['image/jpeg', 'image/png', 'application/pdf'];
     if (allowedTypes.includes(file.mimetype)) {
@@ -33,28 +37,34 @@ const upload = multer({
   },
 });
 
-// MongoDB connection (avoid reconnecting on every call)
-let dbConnected = false;
-async function connectDB() {
-  if (!dbConnected) {
-    await mongoose.connect(process.env.MONGODB_URI!);
-    dbConnected = true;
-    console.log('✅ Connected to MongoDB');
-  }
-}
-
-// Schema
+// MongoDB Schema
 const travelFormSchema = new mongoose.Schema({
-  name: String,
-  email: String,
-  phone: String,
-  dateOfTravel: Date,
-  source: String,
-  reviewScreenshotBuffer: Buffer,
-  ticketBuffer: Buffer,
+  name: { type: String, required: true },
+  email: { type: String, required: true },
+  phone: { type: String, required: true },
+  dateOfTravel: { type: Date, required: true },
+  source: { type: String, required: true },
+  reviewScreenshot: { type: Buffer, required: true },
+  reviewScreenshotType: { type: String, required: true },
+  ticket: { type: Buffer, required: true },
+  ticketType: { type: String, required: true },
   createdAt: { type: Date, default: Date.now },
 });
-const TravelForm = mongoose.models.TravelForm || mongoose.model('TravelForm', travelFormSchema);
+
+const TravelForm = mongoose.model('TravelForm', travelFormSchema);
+
+// Connect to MongoDB
+let cachedDb: typeof mongoose | null = null;
+
+async function connectToDatabase() {
+  if (cachedDb) {
+    return cachedDb;
+  }
+
+  const db = await mongoose.connect(process.env.MONGODB_URI!);
+  cachedDb = db;
+  return db;
+}
 
 // Routes
 app.post('/api/submit-form', upload.fields([
@@ -62,40 +72,51 @@ app.post('/api/submit-form', upload.fields([
   { name: 'ticket', maxCount: 1 },
 ]), async (req, res) => {
   try {
-    await connectDB();
-
+    await connectToDatabase();
+    
     const files = req.files as { [fieldname: string]: Express.Multer.File[] };
-
+    
     if (!files.reviewScreenshot || !files.ticket) {
       return res.status(400).json({ error: 'Both review screenshot and ticket are required' });
     }
 
     const formData = {
       ...req.body,
-      reviewScreenshotBuffer: files.reviewScreenshot[0].buffer,
-      ticketBuffer: files.ticket[0].buffer,
+      reviewScreenshot: files.reviewScreenshot[0].buffer,
+      reviewScreenshotType: files.reviewScreenshot[0].mimetype,
+      ticket: files.ticket[0].buffer,
+      ticketType: files.ticket[0].mimetype,
     };
 
     const travelForm = new TravelForm(formData);
     await travelForm.save();
 
-    res.status(201).json({ message: 'Form submitted successfully', data: travelForm._id });
+    res.status(201).json({ 
+      message: 'Form submitted successfully',
+      data: {
+        ...travelForm.toObject(),
+        reviewScreenshot: undefined,
+        ticket: undefined
+      }
+    });
   } catch (error) {
     console.error('Error submitting form:', error);
     res.status(500).json({ error: 'Failed to submit form' });
   }
 });
 
-// Test route
-app.get('/api/health', (req, res) => {
-  res.send('✅ Server is live on Vercel!');
-});
-
-// Global error handler
+// Error handling middleware
 app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error(err.stack);
   res.status(500).json({ error: 'Something went wrong!' });
 });
 
-// Export handler for Vercel
-export const handler = serverless(app);
+// Only start the server if we're not in a Vercel environment
+if (process.env.NODE_ENV !== 'production') {
+  const PORT = process.env.PORT || 5000;
+  app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+  });
+}
+
+export default app; 
