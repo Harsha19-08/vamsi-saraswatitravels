@@ -66,7 +66,17 @@ async function connectToDatabase() {
   return db;
 }
 
-// Routes
+// Root route
+app.get('/', (req, res) => {
+  res.json({ message: 'Welcome to Travel Form API' });
+});
+
+// Health check route
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date() });
+});
+
+// Form submission route
 app.post('/api/submit-form', upload.fields([
   { name: 'reviewScreenshot', maxCount: 1 },
   { name: 'ticket', maxCount: 1 },
@@ -109,6 +119,11 @@ app.post('/api/submit-form', upload.fields([
 app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error(err.stack);
   res.status(500).json({ error: 'Something went wrong!' });
+});
+
+// 404 handler for undefined routes
+app.use((req: express.Request, res: express.Response) => {
+  res.status(404).json({ error: 'Route not found' });
 });
 
 // Only start the server if we're not in a Vercel environment
