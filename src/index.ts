@@ -68,37 +68,54 @@ async function connectToDatabase() {
 
     console.log('Connecting to MongoDB...');
     
-    // Direct MongoDB connection URL
+    // MongoDB connection options
+    const options = {
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+      family: 4,
+      retryWrites: true,
+      w: 'majority'
+    };
+
+    // Direct MongoDB connection URL with updated credentials
     const MONGODB_URI = 'mongodb+srv://vamsi:vamsi123@cluster0.qnzwuai.mongodb.net/travel-form?retryWrites=true&w=majority';
 
-    console.log('MongoDB URI format check:', {
-      hasProtocol: MONGODB_URI.startsWith('mongodb'),
-      length: MONGODB_URI.length
-    });
-
-    const db = await mongoose.connect(MONGODB_URI);
+    console.log('Attempting MongoDB connection...');
+    const db = await mongoose.connect(MONGODB_URI, options);
     console.log('Successfully connected to MongoDB');
+    
+    // Test the connection with a simple query
+    await mongoose.connection.db.admin().ping();
+    console.log('MongoDB ping successful');
+    
     cachedDb = db;
     return db;
   } catch (error) {
     const mongoError = error as Error;
-    console.error('MongoDB connection error:', {
+    console.error('MongoDB connection error details:', {
+      name: mongoError.name,
       message: mongoError.message,
       stack: mongoError.stack,
-      name: mongoError.name
+      code: (mongoError as any).code,
+      codeName: (mongoError as any).codeName
     });
     throw new Error(`Database connection failed: ${mongoError.message}`);
   }
 }
 
-// Root route
+// Test route to verify API is working
 app.get('/', (req, res) => {
   res.json({ message: 'Welcome to Travel Form API' });
 });
 
 // Health check route
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date() });
+app.get('/api/health', async (req, res) => {
+  try {
+    await connectToDatabase();
+    res.json({ status: 'ok', database: 'connected' });
+  } catch (error) {
+    res.status(500).json({ status: 'error', message: 'Database connection failed' });
+  }
 });
 
 // Form submission route
@@ -168,12 +185,6 @@ app.post('/api/submit-form', upload.fields([
       ticketType: files.ticket[0].mimetype,
     };
 
-    console.log('Creating new TravelForm document with data:', {
-      ...formData,
-      reviewScreenshot: 'Buffer data',
-      ticket: 'Buffer data'
-    });
-
     try {
       const travelForm = new TravelForm(formData);
       await travelForm.save();
@@ -224,13 +235,8 @@ app.use((err: Error, req: express.Request, res: express.Response, next: express.
   });
   res.status(500).json({ 
     error: 'Something went wrong!',
-    details: process.env.NODE_ENV === 'development' ? err.message : undefined
+    details: err.message
   });
-});
-
-// 404 handler for undefined routes
-app.use((req: express.Request, res: express.Response) => {
-  res.status(404).json({ error: 'Route not found' });
 });
 
 // Only start the server if we're not in a Vercel environment
