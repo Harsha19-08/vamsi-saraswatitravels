@@ -5,6 +5,8 @@ import multer from 'multer';
 import path from 'path';
 import dotenv from 'dotenv';
 import morgan from 'morgan';
+import serverless from 'serverless-http';
+import fs from 'fs';
 
 // Load environment variables
 dotenv.config();
@@ -19,22 +21,26 @@ app.use(cors({
 app.use(express.json());
 app.use(morgan('dev'));
 
+// Ensure uploads directory exists
+const uploadDir = path.join(__dirname, '..', 'uploads');
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir);
+}
+
 // Configure multer for file uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, 'uploads/');
+    cb(null, uploadDir);
   },
   filename: (req, file, cb) => {
-    const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1E9)}`;
+    const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
     cb(null, `${file.fieldname}-${uniqueSuffix}${path.extname(file.originalname)}`);
   },
 });
 
 const upload = multer({
   storage,
-  limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB limit
-  },
+  limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const allowedTypes = ['image/jpeg', 'image/png', 'application/pdf'];
     if (allowedTypes.includes(file.mimetype)) {
@@ -45,25 +51,28 @@ const upload = multer({
   },
 });
 
-// Create uploads directory if it doesn't exist
-import fs from 'fs';
-if (!fs.existsSync('uploads')) {
-  fs.mkdirSync('uploads');
+// MongoDB connection (avoid reconnecting on every call)
+let dbConnected = false;
+async function connectDB() {
+  if (!dbConnected) {
+    await mongoose.connect(process.env.MONGODB_URI!);
+    dbConnected = true;
+    console.log('✅ Connected to MongoDB');
+  }
 }
 
-// MongoDB Schema
+// Schema
 const travelFormSchema = new mongoose.Schema({
-  name: { type: String, required: true },
-  email: { type: String, required: true },
-  phone: { type: String, required: true },
-  dateOfTravel: { type: Date, required: true },
-  source: { type: String, required: true },
-  reviewScreenshotPath: { type: String, required: true },
-  ticketPath: { type: String, required: true },
+  name: String,
+  email: String,
+  phone: String,
+  dateOfTravel: Date,
+  source: String,
+  reviewScreenshotPath: String,
+  ticketPath: String,
   createdAt: { type: Date, default: Date.now },
 });
-
-const TravelForm = mongoose.model('TravelForm', travelFormSchema);
+const TravelForm = mongoose.models.TravelForm || mongoose.model('TravelForm', travelFormSchema);
 
 // Routes
 app.post('/api/submit-form', upload.fields([
@@ -71,8 +80,9 @@ app.post('/api/submit-form', upload.fields([
   { name: 'ticket', maxCount: 1 },
 ]), async (req, res) => {
   try {
+    await connectDB();
+
     const files = req.files as { [fieldname: string]: Express.Multer.File[] };
-    
     if (!files.reviewScreenshot || !files.ticket) {
       return res.status(400).json({ error: 'Both review screenshot and ticket are required' });
     }
@@ -93,21 +103,17 @@ app.post('/api/submit-form', upload.fields([
   }
 });
 
-// Connect to MongoDB
-mongoose.connect(process.env.MONGODB_URI!)
-  .then(() => {
-    console.log('Connected to MongoDB');
-    const PORT = process.env.PORT || 5000;
-    app.listen(PORT, () => {
-      console.log(`Server is running on port ${PORT}`);
-    });
-  })
-  .catch((error) => {
-    console.error('MongoDB connection error:', error);
-  });
+// Test route to verify deployment
+app.get('/api/health', (req, res) => {
+  res.send('✅ Server is live on Vercel!');
+});
 
 // Error handling middleware
 app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error(err.stack);
   res.status(500).json({ error: 'Something went wrong!' });
-}); 
+});
+
+
+// Export as serverless handler
+export const handler = serverless(app);
